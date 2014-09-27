@@ -63,6 +63,7 @@ namespace XlsxToCsv
             int numberFormatToApply = -1;
             string text = "";
             Dictionary<string, int> headers = new Dictionary<string, int>();
+            List<int> columnsToSkip = new List<int>();
             StringBuilder lineBuilder = new StringBuilder();
 
             using (StreamWriter writer = new StreamWriter(filename))
@@ -111,14 +112,22 @@ namespace XlsxToCsv
                             {
                                 while (currColumnIndex < sheetEndColumnIndex)
                                 {
-                                    // check end of row
-                                    if (currColumnIndex == sheetEndColumnIndex - 1)
-                                        lineBuilder.Append("\"\"\n");
-                                    else
-                                        lineBuilder.Append("\"\",");
+                                    if (!columnsToSkip.Contains(currColumnIndex))
+                                    {
+                                        lineBuilder.Append("\"\"");
+
+                                        // check end of row
+                                        if (currColumnIndex != sheetEndColumnIndex - 1)
+                                            lineBuilder.Append(",");
+                                    }
+
                                     currColumnIndex++;
                                 }
                             }
+                            // if we exclude columns from behind, there will be trailing commas
+                            if (lineBuilder.ToString().EndsWith(","))
+                                lineBuilder.Length--;
+                            lineBuilder.Append("\n");
                             string line = lineBuilder.ToString();
                             writer.Write(line);
 
@@ -150,11 +159,15 @@ namespace XlsxToCsv
                             {
                                 while (currColumnIndex < cellColumnIndex)
                                 {
-                                    // check end of row
-                                    if (currColumnIndex == sheetEndColumnIndex)
-                                        lineBuilder.Append("\"\"\n");
-                                    else
-                                        lineBuilder.Append("\"\",");
+                                    if (!columnsToSkip.Contains(currColumnIndex))
+                                    {
+                                        lineBuilder.Append("\"\"");
+
+                                        // check end of row
+                                        if (currColumnIndex != sheetEndColumnIndex)
+                                            lineBuilder.Append(",");
+                                    }
+
                                     currColumnIndex++;
                                 }
                             }
@@ -179,11 +192,13 @@ namespace XlsxToCsv
                             // Fill missing cell value element at end of cell
                             if (!hasCellValue)
                             {
-                                // check end of row
-                                if (currColumnIndex == sheetEndColumnIndex)
-                                    lineBuilder.Append("\"\"\n");
-                                else
-                                    lineBuilder.Append("\"\",");
+                                if (!columnsToSkip.Contains(currColumnIndex))
+                                {
+                                    lineBuilder.Append("\"\"");
+                                    // check end of row
+                                    if (currColumnIndex != sheetEndColumnIndex)
+                                        lineBuilder.Append(",");
+                                }
                             }
                             // reset cell flags at end of cell
                             hasCellValue = false;
@@ -239,9 +254,13 @@ namespace XlsxToCsv
                             }
 
                             // For header row, sometimes it is a requirement to have unique names
-                            // If it is not, this part  and the headers dictionary can be removed
+                            // If it is not, this part and the headers dictionary can be removed
                             if (rowCount == 0)
                             {
+                                // if header text is empty, do not write this column
+                                if (text == "")
+                                    columnsToSkip.Add(currColumnIndex);
+
                                 if (!headers.ContainsKey(text))
                                     headers.Add(text, 1);
                                 else
@@ -250,11 +269,16 @@ namespace XlsxToCsv
                                     text = text + headers[text];
                                 }
                             }
-                            // check end of row
-                            if (currColumnIndex == sheetEndColumnIndex)
-                                lineBuilder.Append("\"" + text + "\"\n");
-                            else
-                                lineBuilder.Append("\"" + text + "\",");
+
+                            if (!columnsToSkip.Contains(currColumnIndex))
+                            {
+                                lineBuilder.Append("\"" + text + "\"");
+
+                                // check end of row
+                                if (currColumnIndex != sheetEndColumnIndex)
+                                    lineBuilder.Append(",");
+                            }
+
                             continue;
                         }
                         else
@@ -280,6 +304,10 @@ namespace XlsxToCsv
 
                             if (rowCount == 0)
                             {
+                                // if header text is empty, do not write this column
+                                if (text == "")
+                                    columnsToSkip.Add(currColumnIndex);
+
                                 if (!headers.ContainsKey(text))
                                     headers.Add(text, 1);
                                 else
@@ -288,11 +316,16 @@ namespace XlsxToCsv
                                     text = text + headers[text];
                                 }
                             }
-                            // check end of row
-                            if (currColumnIndex == sheetEndColumnIndex)
-                                lineBuilder.Append("\"" + text + "\"\n");
-                            else
-                                lineBuilder.Append("\"" + text + "\",");
+
+                            if (!columnsToSkip.Contains(currColumnIndex))
+                            {
+                                lineBuilder.Append("\"" + text + "\"");
+
+                                // check end of row
+                                if (currColumnIndex != sheetEndColumnIndex)
+                                    lineBuilder.Append(",");
+                            }
+
                             continue;
                         }
                         else
