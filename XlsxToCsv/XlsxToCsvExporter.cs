@@ -3,6 +3,7 @@ using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -14,6 +15,21 @@ namespace XlsxToCsv
     {
         SharedStringItem[] sharedStringItems;
         CellFormat[] cellFormats;
+
+        int sheetEndColumnIndex = 0;
+        int currColumnIndex = 0, cellColumnIndex = 0;
+        int rowCount = 0;
+        int numberFormatToApply = -1;
+
+        bool hasCellValue = false;
+        bool isSharedString = false;
+
+        string textDelimiter = "\"";
+        string columnDelimiter = ",";
+
+        Dictionary<string, int> headers = new Dictionary<string, int>();
+        List<int> columnsToSkip = new List<int>() { 35, 36, 37, 38, 39, 40, 41 };
+        StringBuilder lineBuilder = new StringBuilder();
 
         public void Export(string excelpath, string worksheetName, string destinationDir)
         {
@@ -53,19 +69,6 @@ namespace XlsxToCsv
 
         private void ExportWorksheetPart(WorksheetPart worksheetPart, string filename)
         {
-            string sheetStartCellRef = "", sheetEndCellRef = "";
-            string sheetStartColumnName = "", sheetEndColumnName = "", cellColumnName = "";
-            int sheetStartColumnIndex = 0, sheetEndColumnIndex = 0;
-            int currColumnIndex = 0, cellColumnIndex = 0;
-            int rowCount = 0;
-            bool hasCellValue = false;
-            bool isSharedString = false;
-            int numberFormatToApply = -1;
-            string text = "";
-            Dictionary<string, int> headers = new Dictionary<string, int>();
-            List<int> columnsToSkip = new List<int>();
-            StringBuilder lineBuilder = new StringBuilder();
-
             using (StreamWriter writer = new StreamWriter(filename))
             {
                 OpenXmlReader reader = OpenXmlReader.Create(worksheetPart);
@@ -78,14 +81,7 @@ namespace XlsxToCsv
                     {
                         if (reader.IsStartElement)
                         {
-                            var sheetRefAttr = reader.Attributes.SingleOrDefault(attr => attr.LocalName == "ref");
-                            string sheetRefValue = sheetRefAttr.Value;
-                            sheetStartCellRef = sheetRefValue.Split(':')[0];
-                            sheetEndCellRef = sheetRefValue.Split(':')[1];
-                            sheetStartColumnName = GetColumnNameFromCellAddress(sheetStartCellRef);
-                            sheetEndColumnName = GetColumnNameFromCellAddress(sheetEndCellRef);
-                            sheetStartColumnIndex = ColumnIndexFromName(sheetStartColumnName);
-                            sheetEndColumnIndex = ColumnIndexFromName(sheetEndColumnName);
+                            HandleSheetDimensionStartElement(reader);
                             continue;
                         }
                         else
@@ -106,36 +102,7 @@ namespace XlsxToCsv
                         }
                         else
                         {
-                            // Sometimes blank cells do not create cell elements
-                            // Fill missing cell elements at end of row
-                            if (currColumnIndex != sheetEndColumnIndex)
-                            {
-                                while (currColumnIndex < sheetEndColumnIndex)
-                                {
-                                    if (!columnsToSkip.Contains(currColumnIndex))
-                                    {
-                                        lineBuilder.Append("\"\"");
-
-                                        // check end of row
-                                        if (currColumnIndex != sheetEndColumnIndex - 1)
-                                            lineBuilder.Append(",");
-                                    }
-
-                                    currColumnIndex++;
-                                }
-                            }
-                            // if we exclude columns from behind, there will be trailing commas
-                            if (lineBuilder.ToString().EndsWith(","))
-                                lineBuilder.Length--;
-                            lineBuilder.Append("\n");
-                            string line = lineBuilder.ToString();
-                            writer.Write(line);
-
-                            rowCount++;
-
-                            // reset counters at end of row
-                            currColumnIndex = 0;
-                            lineBuilder.Length = 0;
+                            HandleRowEndElement(reader, writer);
                             continue;
                         }
                     }
@@ -148,62 +115,12 @@ namespace XlsxToCsv
                     {
                         if (reader.IsStartElement)
                         {
-                            currColumnIndex++;
-                            var cellRefAttr = reader.Attributes.SingleOrDefault(attr => attr.LocalName == "r");
-                            string cellRefValue = cellRefAttr.Value;
-                            cellColumnName = GetColumnNameFromCellAddress(cellRefValue);
-                            cellColumnIndex = ColumnIndexFromName(cellColumnName);
-                            // Sometimes blank cells do not create cell elements
-                            // Fill missing cell elements at beginning of next cell
-                            if (currColumnIndex != cellColumnIndex)
-                            {
-                                while (currColumnIndex < cellColumnIndex)
-                                {
-                                    if (!columnsToSkip.Contains(currColumnIndex))
-                                    {
-                                        lineBuilder.Append("\"\"");
-
-                                        // check end of row
-                                        if (currColumnIndex != sheetEndColumnIndex)
-                                            lineBuilder.Append(",");
-                                    }
-
-                                    currColumnIndex++;
-                                }
-                            }
-
-                            var typeAttr = reader.Attributes.SingleOrDefault(attr => attr.LocalName == "t");
-                            string typeValue = typeAttr.Value;
-                            if (typeValue == "s") isSharedString = true;
-
-                            if (!isSharedString)
-                            {
-                                var styleAttr = reader.Attributes.SingleOrDefault(attr => attr.LocalName == "s");
-                                string styleValue = styleAttr.Value;
-                                if (styleValue != null && styleValue != "")
-                                    numberFormatToApply =
-                                        Convert.ToInt32(cellFormats[Convert.ToInt16(styleValue)].NumberFormatId.Value);
-                            }
+                            HandleCellStartElement(reader);                            
                             continue;
                         }
                         else
                         {
-                            // Sometimes blank cells have cell elements but do not create cell value elements
-                            // Fill missing cell value element at end of cell
-                            if (!hasCellValue)
-                            {
-                                if (!columnsToSkip.Contains(currColumnIndex))
-                                {
-                                    lineBuilder.Append("\"\"");
-                                    // check end of row
-                                    if (currColumnIndex != sheetEndColumnIndex)
-                                        lineBuilder.Append(",");
-                                }
-                            }
-                            // reset cell flags at end of cell
-                            hasCellValue = false;
-                            isSharedString = false;
-                            numberFormatToApply = -1;
+                            HandleCellEndElement(reader);
                             continue;
                         }
                     }
@@ -216,69 +133,7 @@ namespace XlsxToCsv
                     {
                         if (reader.IsStartElement)
                         {
-                            hasCellValue = true;
-                            if (isSharedString)
-                                text = sharedStringItems[Convert.ToInt32(reader.GetText())].InnerText;
-                            else
-                                text = reader.GetText();
-
-                            text = text.Replace("\n", " ");
-                            text = text.Replace("\"", "'");
-
-                            if (numberFormatToApply > -1)
-                            {
-                                int testInt = 0;
-                                DateTime testDateTime;
-
-                                // TODO Add new number format handlers when faced
-                                switch (numberFormatToApply)
-                                {
-                                    case 0:
-                                        testInt = Convert.ToInt32(text);
-                                        text = testInt.ToString("0");
-                                        break;
-                                    case 22:
-                                        testDateTime = DateTime.FromOADate(Convert.ToDouble(text));
-                                        text = testDateTime.ToString("d/M/yyyy h:mm");
-                                        break;
-                                    case 14:
-                                        testDateTime = DateTime.FromOADate(Convert.ToDouble(text));
-                                        text = testDateTime.ToString("d/M/yyyy");
-                                        break;
-                                    case 49:
-                                        break;
-                                    default:
-
-                                        break;
-                                }
-                            }
-
-                            // For header row, sometimes it is a requirement to have unique names
-                            // If it is not, this part and the headers dictionary can be removed
-                            if (rowCount == 0)
-                            {
-                                // if header text is empty, do not write this column
-                                if (text == "")
-                                    columnsToSkip.Add(currColumnIndex);
-
-                                if (!headers.ContainsKey(text))
-                                    headers.Add(text, 1);
-                                else
-                                {
-                                    headers[text] = headers[text] + 1;
-                                    text = text + headers[text];
-                                }
-                            }
-
-                            if (!columnsToSkip.Contains(currColumnIndex))
-                            {
-                                lineBuilder.Append("\"" + text + "\"");
-
-                                // check end of row
-                                if (currColumnIndex != sheetEndColumnIndex)
-                                    lineBuilder.Append(",");
-                            }
-
+                            HandleCellValueStartElement(reader);
                             continue;
                         }
                         else
@@ -295,37 +150,7 @@ namespace XlsxToCsv
                     {
                         if (reader.IsStartElement)
                         {
-                            hasCellValue = true;
-                            InlineString inlineString = reader.LoadCurrentElement() as InlineString;
-                            text = inlineString.InnerText;
-
-                            text = text.Replace("\n", " ");
-                            text = text.Replace("\"", "'");
-
-                            if (rowCount == 0)
-                            {
-                                // if header text is empty, do not write this column
-                                if (text == "")
-                                    columnsToSkip.Add(currColumnIndex);
-
-                                if (!headers.ContainsKey(text))
-                                    headers.Add(text, 1);
-                                else
-                                {
-                                    headers[text] = headers[text] + 1;
-                                    text = text + headers[text];
-                                }
-                            }
-
-                            if (!columnsToSkip.Contains(currColumnIndex))
-                            {
-                                lineBuilder.Append("\"" + text + "\"");
-
-                                // check end of row
-                                if (currColumnIndex != sheetEndColumnIndex)
-                                    lineBuilder.Append(",");
-                            }
-
+                            HandleInlineStringStartElement(reader);
                             continue;
                         }
                         else
@@ -336,7 +161,235 @@ namespace XlsxToCsv
 
                     #endregion InlineString
                 }
+
                 reader.Close();
+            }
+        }
+
+        private void HandleSheetDimensionStartElement(OpenXmlReader reader)
+        {
+            var sheetRefAttr = reader.Attributes.SingleOrDefault(attr => attr.LocalName == "ref");
+            string sheetRefValue = sheetRefAttr.Value;
+            string sheetStartCellRef = sheetRefValue.Split(':')[0];
+            string sheetEndCellRef = sheetRefValue.Split(':')[1];
+            string sheetStartColumnName = GetColumnNameFromCellAddress(sheetStartCellRef);
+            string sheetEndColumnName = GetColumnNameFromCellAddress(sheetEndCellRef);
+            sheetEndColumnIndex = ColumnIndexFromName(sheetEndColumnName);
+        }
+
+        private void HandleRowEndElement(OpenXmlReader reader, StreamWriter writer)
+        {
+            // Sometimes blank cells do not create cell elements
+            // Fill missing cell elements at end of row
+            if (currColumnIndex != sheetEndColumnIndex)
+            {
+                while (currColumnIndex < sheetEndColumnIndex)
+                {
+                    if (!columnsToSkip.Contains(currColumnIndex))
+                    {
+                        lineBuilder.Append(string.Format("{0}{0}", textDelimiter));
+
+                        // check end of row
+                        if (currColumnIndex != sheetEndColumnIndex - 1)
+                            lineBuilder.Append(columnDelimiter);
+                    }
+
+                    currColumnIndex++;
+                }
+            }
+            // if we exclude columns from behind, there will be trailing commas
+            if (lineBuilder.ToString().EndsWith(columnDelimiter))
+                lineBuilder.Length--;
+            lineBuilder.Append("\n");
+            string line = lineBuilder.ToString();
+            writer.Write(line);
+
+            rowCount++;
+
+            // reset counters at end of row
+            currColumnIndex = 0;
+            lineBuilder.Length = 0;
+        }
+
+        private void HandleCellValueStartElement(OpenXmlReader reader)
+        {
+            string text = "";
+            hasCellValue = true;
+            
+            if (isSharedString)
+                text = sharedStringItems[Convert.ToInt32(reader.GetText())].InnerText;
+            else
+                text = reader.GetText();
+
+            text = text.Replace("\n", " ");
+            text = text.Replace("\"", "'");
+
+            if (numberFormatToApply > -1)
+            {
+                DateTime testDateTime;
+
+                // TODO Add new number format handlers when faced
+                switch (numberFormatToApply)
+                {
+                    case 14:
+                        testDateTime = DateTime.FromOADate(Convert.ToDouble(text));
+                        text = testDateTime.ToString(CultureInfo.CurrentCulture.DateTimeFormat.ShortDatePattern);
+                        break;
+                    case 15:
+                        testDateTime = DateTime.FromOADate(Convert.ToDouble(text));
+                        text = testDateTime.ToString("d-MMM-yy");
+                        break;
+                    case 16:
+                        testDateTime = DateTime.FromOADate(Convert.ToDouble(text));
+                        text = testDateTime.ToString("d-MMM");
+                        break;
+                    case 17:
+                        testDateTime = DateTime.FromOADate(Convert.ToDouble(text));
+                        text = testDateTime.ToString("MMM-yy");
+                        break;
+                    case 18:
+                        testDateTime = DateTime.FromOADate(Convert.ToDouble(text));
+                        text = testDateTime.ToString("h:mm tt");
+                        break;
+                    case 19:
+                        testDateTime = DateTime.FromOADate(Convert.ToDouble(text));
+                        text = testDateTime.ToString("h:mm:ss tt");
+                        break;
+                    case 20:
+                        testDateTime = DateTime.FromOADate(Convert.ToDouble(text));
+                        text = testDateTime.ToString("h:mm");
+                        break;
+                    case 21:
+                        testDateTime = DateTime.FromOADate(Convert.ToDouble(text));
+                        text = testDateTime.ToString("h:mm:ss");
+                        break;
+                    case 22:
+                        testDateTime = DateTime.FromOADate(Convert.ToDouble(text));
+                        text = testDateTime.ToString(string.Format("{0} h:mm", CultureInfo.CurrentCulture.DateTimeFormat.ShortDatePattern));
+                        break;
+                    default:
+                        break;
+                }
+            }
+
+            // For header row, sometimes it is a requirement to have unique names
+            // If it is not, this part and the headers dictionary can be removed
+            if (rowCount == 0)
+            {
+                // if header text is empty, do not write this column
+                if (text == "")
+                    columnsToSkip.Add(currColumnIndex);
+
+                if (!headers.ContainsKey(text))
+                    headers.Add(text, 1);
+                else
+                {
+                    headers[text] = headers[text] + 1;
+                    text = text + headers[text];
+                }
+            }
+
+            if (!columnsToSkip.Contains(currColumnIndex))
+            {
+                lineBuilder.Append(string.Format("{0}{1}{0}", textDelimiter, text));
+
+                // check end of row
+                if (currColumnIndex != sheetEndColumnIndex)
+                    lineBuilder.Append(columnDelimiter);
+            }
+        }
+
+        private void HandleCellStartElement(OpenXmlReader reader)
+        {
+            currColumnIndex++;
+            var cellRefAttr = reader.Attributes.SingleOrDefault(attr => attr.LocalName == "r");
+            string cellRefValue = cellRefAttr.Value;
+            string cellColumnName = GetColumnNameFromCellAddress(cellRefValue);
+            cellColumnIndex = ColumnIndexFromName(cellColumnName);
+            // Sometimes blank cells do not create cell elements
+            // Fill missing cell elements at beginning of next cell
+            if (currColumnIndex != cellColumnIndex)
+            {
+                while (currColumnIndex < cellColumnIndex)
+                {
+                    if (!columnsToSkip.Contains(currColumnIndex))
+                    {
+                        lineBuilder.Append(string.Format("{0}{0}", textDelimiter));
+
+                        // check end of row
+                        if (currColumnIndex != sheetEndColumnIndex)
+                            lineBuilder.Append(columnDelimiter);
+                    }
+
+                    currColumnIndex++;
+                }
+            }
+
+            var typeAttr = reader.Attributes.SingleOrDefault(attr => attr.LocalName == "t");
+            string typeValue = typeAttr.Value;
+            if (typeValue == "s") isSharedString = true;
+
+            if (!isSharedString)
+            {
+                var styleAttr = reader.Attributes.SingleOrDefault(attr => attr.LocalName == "s");
+                string styleValue = styleAttr.Value;
+                if (styleValue != null && styleValue != "")
+                    numberFormatToApply =
+                        Convert.ToInt32(cellFormats[Convert.ToInt16(styleValue)].NumberFormatId.Value);
+            }
+        }
+
+        private void HandleCellEndElement(OpenXmlReader reader)
+        {
+            // Sometimes blank cells have cell elements but do not create cell value elements
+            // Fill missing cell value element at end of cell
+            if (!hasCellValue)
+            {
+                if (!columnsToSkip.Contains(currColumnIndex))
+                {
+                    lineBuilder.Append(string.Format("{0}{0}", textDelimiter));
+                    // check end of row
+                    if (currColumnIndex != sheetEndColumnIndex)
+                        lineBuilder.Append(columnDelimiter);
+                }
+            }
+            // reset cell flags at end of cell
+            hasCellValue = false;
+            isSharedString = false;
+            numberFormatToApply = -1;
+        }
+
+        private void HandleInlineStringStartElement(OpenXmlReader reader)
+        {
+            hasCellValue = true;
+            InlineString inlineString = reader.LoadCurrentElement() as InlineString;
+            string text = inlineString.InnerText;
+
+            text = text.Replace("\n", " ");
+            text = text.Replace("\"", "'");
+
+            if (rowCount == 0)
+            {
+                // if header text is empty, do not write this column
+                if (text == "")
+                    columnsToSkip.Add(currColumnIndex);
+
+                if (!headers.ContainsKey(text))
+                    headers.Add(text, 1);
+                else
+                {
+                    headers[text] = headers[text] + 1;
+                    text = text + headers[text];
+                }
+            }
+
+            if (!columnsToSkip.Contains(currColumnIndex))
+            {
+                lineBuilder.Append(string.Format("{0}{1}{0}", textDelimiter, text));
+
+                // check end of row
+                if (currColumnIndex != sheetEndColumnIndex)
+                    lineBuilder.Append(columnDelimiter);
             }
         }
 
