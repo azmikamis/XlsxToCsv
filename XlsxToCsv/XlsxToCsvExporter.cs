@@ -192,6 +192,11 @@ namespace XlsxToCsv
             {
                 while (currColumnIndex < sheetEndColumnIndex)
                 {
+                    if (rowCount == 0)
+                    {
+                        columnsToSkip.Add(currColumnIndex);
+                    }
+                    
                     if (!columnsToSkip.Contains(currColumnIndex))
                     {
                         lineBuilder.Append(string.Format("{0}{0}", textDelimiter));
