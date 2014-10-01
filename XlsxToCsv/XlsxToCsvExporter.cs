@@ -69,6 +69,11 @@ namespace XlsxToCsv
 
         private void ExportWorksheetPart(WorksheetPart worksheetPart, string filename)
         {
+            currColumnIndex = 0;
+            rowCount = 0;
+            headers.Clear();
+            columnsToSkip.Clear();
+            
             using (StreamWriter writer = new StreamWriter(filename))
             {
                 OpenXmlReader reader = OpenXmlReader.Create(worksheetPart);
@@ -179,6 +184,8 @@ namespace XlsxToCsv
 
         private void HandleRowEndElement(OpenXmlReader reader, StreamWriter writer)
         {
+            // Assume accessing next cell
+            currColumnIndex++;
             // Sometimes blank cells do not create cell elements
             // Fill missing cell elements at end of row
             if (currColumnIndex != sheetEndColumnIndex)
