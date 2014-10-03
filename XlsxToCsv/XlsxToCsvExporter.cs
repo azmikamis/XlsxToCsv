@@ -190,7 +190,7 @@ namespace XlsxToCsv
             // Fill missing cell elements at end of row
             if (currColumnIndex != sheetEndColumnIndex)
             {
-                while (currColumnIndex < sheetEndColumnIndex)
+                while (currColumnIndex <= sheetEndColumnIndex)
                 {
                     if (rowCount == 0)
                     {
