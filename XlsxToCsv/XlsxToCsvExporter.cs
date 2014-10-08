@@ -209,6 +209,13 @@ namespace XlsxToCsv
                     currColumnIndex++;
                 }
             }
+            else
+            {
+                if (rowCount == 0)
+                {
+                    columnsToSkip.Add(currColumnIndex);
+                }
+            }
             // if we exclude columns from behind, there will be trailing commas
             if (lineBuilder.ToString().EndsWith(columnDelimiter))
                 lineBuilder.Length--;
