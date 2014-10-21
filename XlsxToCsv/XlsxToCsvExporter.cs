@@ -215,6 +215,15 @@ namespace XlsxToCsv
                 {
                     columnsToSkip.Add(currColumnIndex);
                 }
+                
+                if (!columnsToSkip.Contains(currColumnIndex))
+                {
+                    lineBuilder.Append(string.Format("{0}{0}", textDelimiter));
+
+                    // check end of row
+                    if (currColumnIndex != sheetEndColumnIndex - 1)
+                        lineBuilder.Append(columnDelimiter);
+                }
             }
             // if we exclude columns from behind, there will be trailing commas
             if (lineBuilder.ToString().EndsWith(columnDelimiter))
